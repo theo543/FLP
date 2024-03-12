@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wall -Wextra #-}
+
 import Data.Char
 
 newtype Parser a = Parser { parse :: String -> [(a,String)] }

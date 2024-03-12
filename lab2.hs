@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wall -Wextra #-}
+
 import Data.Char
 import Debug.Trace
 
