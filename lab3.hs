@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wall -Wextra -Wno-unused-do-bind -Wno-name-shadowing #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 import Data.Char
@@ -10,11 +11,10 @@ item = Parser (\cs -> case cs of
                 (c:cs) -> [(c,cs)])
 
 instance Monad Parser where
-    return a = Parser (\cs -> [(a,cs)])
     p >>= f = Parser (\cs -> concat (map (\(a, cs') -> (parse (f a) cs')) (parse p cs)))
 
 instance Applicative Parser where
-    pure = return
+    pure a = Parser (\cs -> [(a,cs)])
     mf <*> ma = do
         f <- mf
         va <- ma
@@ -32,7 +32,7 @@ psum p q = Parser (\cs -> (parse p cs) ++ (parse q cs))
 (<|>) :: Parser a -> Parser a -> Parser a
 p <|> q = Parser (\cs -> case parse (psum p q) cs of
                                 [] -> []
-                                (x:xs) -> [x])
+                                (x:_) -> [x])
 
 dpsum0 :: Parser [a] -> Parser [a]                       
 dpsum0 p = p <|> (return [])
@@ -80,6 +80,7 @@ data AExp = Nu Int | Qid String | PlusE AExp AExp | TimesE AExp AExp | DivE AExp
 aexp :: Parser AExp
 aexp = plusexp <|> mulexp <|> divexp <|> npexp
 
+npexp :: Parser AExp
 npexp = parexp <|> qid <|> integer
 
 parexp :: Parser AExp
@@ -118,7 +119,7 @@ integer = do
                       do
                         ds <- many0 digit
                         return (Nu (ss*(asInt (d:ds))))
-          where asInt ds = sum [d * (10^p) | (d, p) <- zip (reverse ds) [0..] ]
+          where asInt ds = sum [d * (10^p) | (d, p) <- zip (reverse ds) [(0 :: Int)..] ]
 
 qid :: Parser AExp
 qid = do
@@ -154,6 +155,7 @@ data BExp = BE Bool | LE AExp AExp | NotE BExp | AndE BExp BExp
 bexp :: Parser BExp
 bexp = lexp <|> notexp <|> andexp <|> npexpb
 
+npexpb :: Parser BExp
 npexpb = parexpb <|> true <|> false
 
 parexpb :: Parser BExp
@@ -257,18 +259,29 @@ skip = do
           symbol "skip"
           return Skip
 
+parseGet :: Parser a -> String -> a
+parseGet p s = case parse p s of
+    [] -> error "Parsing produced no results."
+    (a, _):[] -> a
+    _ -> error "Parsing produced multiple results."
+
+sum_no :: String
 sum_no = "'n:=100; 's:=0; 'i:=0; while ( ('i<= 'n)) { 's:='s+'i; 'i:= 'i+1} "
 
 sum_no_p :: Stmt
-sum_no_p = (fst.head) (parse stmt sum_no)
+sum_no_p = parseGet stmt sum_no
 
+inf_cycle :: String
 inf_cycle = "'n := 0; while (0 <= 0) {'n := 'n +1}"
 
 inf_cycle_p :: Stmt
-inf_cycle_p = (fst.head) (parse stmt inf_cycle)
+inf_cycle_p = parseGet stmt inf_cycle
 
 recall :: String -> [(String, Int)] -> Int
-recall s ((t,v):xs) = if t == s then v else recall s xs
+recall key vars = case matches of
+    (_, val):_ -> val
+    [] -> error $ "Attempt to access uninitialized variable " ++ show key
+    where matches = filter ((== key) . fst) vars
 
 update :: String -> Int -> [(String, Int)] -> [(String, Int)]
 update s v [] = [(s,v)]
@@ -310,13 +323,17 @@ ackermannf = fix (undefined)
 
 data Peano = Zero | Succ Peano deriving Show
 
+evenp :: Peano -> Bool
 evenp Zero = True
 evenp (Succ n) = oddp n
+
+oddp :: Peano -> Bool
 oddp Zero = False
 oddp (Succ n) = evenp n
 
 evenoddf :: Peano -> (Bool, Bool)
 evenoddf = fix (undefined)
+testevenoddf :: Bool
 
 testevenoddf = evenoddf (Succ (Succ (Succ Zero))) == (False, True)
 
@@ -327,8 +344,10 @@ denot (Seq s1 s2) = undefined
 denot (IfE be s1 s2) = undefined
 denot (WhileE be s1) = fix (undefined)
 
+prog :: Stmt
 prog = sum_no_p
 
+test_denot :: Bool
 test_denot = (bssos prog []) == (denot prog [])
 
 --Now general stuff starts
@@ -378,6 +397,7 @@ sampleEval :: String -> Bool
 sampleEval "a" = True
 sampleEval "b" = False
 
+test :: Bool
 test = catamorphism alg sampleExpr sampleEval == False
 
 -- Now specific stuff for IMP
@@ -416,4 +436,5 @@ convstmt (WhileE be s1) = Fx (WhileEF be (convstmt s1))
 progf :: StmtFix
 progf = convstmt prog
 
+testf :: [(String, Int)]
 testf = catamorphism algs progf []

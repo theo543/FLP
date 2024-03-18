@@ -1,7 +1,6 @@
-{-# OPTIONS_GHC -Wall -Wextra #-}
+{-# OPTIONS_GHC -Wall -Wextra -Wno-unused-do-bind -Wno-name-shadowing #-}
 
 import Data.Char
-import Debug.Trace
 
 newtype Parser a = Parser { parse :: String -> [(a,String)] }
 
@@ -30,7 +29,7 @@ psum p q = Parser (\cs -> (parse p cs) ++ (parse q cs))
 (<|>) :: Parser a -> Parser a -> Parser a
 p <|> q = Parser (\cs -> case parse (psum p q) cs of
                                 [] -> []
-                                (x:xs) -> [x])
+                                (x:_) -> [x])
 
 dpsum0 :: Parser [a] -> Parser [a]
 dpsum0 p = p <|> (return [])
@@ -78,6 +77,7 @@ data AExp = Nu Int | Qid String | PlusE AExp AExp | TimesE AExp AExp | DivE AExp
 aexp :: Parser AExp
 aexp = plusexp <|> mulexp <|> divexp <|> npexp
 
+npexp :: Parser AExp
 npexp = parexp <|> qid <|> integer
 
 parexp :: Parser AExp
@@ -116,7 +116,7 @@ integer = do
                       do
                         ds <- many0 digit
                         return (Nu (ss*(asInt (d:ds))))
-          where asInt ds = sum [d * (10^p) | (d, p) <- zip (reverse ds) [0..] ]
+          where asInt ds = sum [d * (10^p) | (d, p) <- zip (reverse ds) [(0 :: Int)..] ]
 
 qid :: Parser AExp
 qid = do
@@ -152,6 +152,7 @@ data BExp = BE Bool | LE AExp AExp | NotE BExp | AndE BExp BExp
 bexp :: Parser BExp
 bexp = lexp <|> notexp <|> andexp <|> npexpb
 
+npexpb :: Parser BExp
 npexpb = parexpb <|> true <|> false
 
 parexpb :: Parser BExp
@@ -255,25 +256,35 @@ skip = do
           symbol "skip"
           return Skip
 
+sum_no :: String
 sum_no = unlines ["'n:=100; 's:=0;", "while (not ('n<= 0)) { 's:='s+'n; 'n:= 'n+ (-1)} "]
 
-sum_no_p :: Stmt
-sum_no_p = fst . head $ parse stmt sum_no
+parseGet :: Parser a -> String -> a
+parseGet p s = case parse p s of
+    [] -> error "Parsing produced no results."
+    (a, _):[] -> a
+    _ -> error "Parsing produced multiple results."
 
+sum_no_p :: Stmt
+sum_no_p = parseGet stmt sum_no
+
+inf_cycle :: String
 inf_cycle = "'n := 0; while (0 <= 0) {'n := 'n +1}"
 
 inf_cycle_p :: Stmt
-inf_cycle_p = fst . head $ parse stmt inf_cycle
+inf_cycle_p = parseGet stmt inf_cycle
 
 recall :: String -> [(String, Int)] -> Int
-recall key vars = snd . head $ matches
+recall key vars = case matches of
+    (_, val):_ -> val
+    [] -> error $ "Attempt to access uninitialized variable " ++ show key
     where matches = filter ((== key) . fst) vars
 
 hasKey :: Eq a => a -> [(a, b)] -> Bool
 hasKey key = any ((== key) . fst)
 
 setValue :: Eq a => a -> b -> [(a, b)] -> [(a, b)]
-setValue key val = map (\t@(k, v) -> if k == key then (k, val) else t)
+setValue key val = map (\t@(k, _) -> if k == key then (k, val) else t)
 
 update :: String -> Int -> [(String, Int)] -> [(String, Int)]
 update key val vars = if hasKey key vars then setValue key val vars else (key, val) : vars
@@ -285,7 +296,7 @@ value expr vars = case expr of
     PlusE a b -> v a + v b
     TimesE a b -> v a * v b
     DivE a b -> v a `div` v b
-    where v expr = value expr vars
+    where v e = value e vars
 
 valueb :: BExp -> [(String, Int)] -> Bool
 valueb expr vars = case expr of
@@ -319,13 +330,17 @@ sssos_star :: (Stmt, [(String, Int)]) -> [(Stmt, [(String, Int)])]
 sssos_star (s1, s) = (s1, s):(sssos_plus (s1, s))
 
 sssos_plus :: (Stmt, [(String, Int)]) -> [(Stmt, [(String, Int)])]
-sssos_plus (Skip, s) = []
+sssos_plus (Skip, _) = []
 sssos_plus (s1, s) = (sssos_star . sssos1) (s1, s)
 
 sssos_final_state :: (Stmt, [(String, Int)]) -> [(String, Int)]
 sssos_final_state = snd . last . sssos_star
 
+prog :: Stmt
 prog = sum_no_p -- replace this with inf_cycle_p
+
+inits :: (Stmt, [a])
 inits = (prog, [])
 
+test :: Bool
 test = (sssos_final_state inits) == (bssos prog [])

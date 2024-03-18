@@ -1,4 +1,4 @@
-{-# OPTIONS_GHC -Wall -Wextra #-}
+{-# OPTIONS_GHC -Wall -Wextra -Wno-unused-do-bind -Wno-name-shadowing #-}
 
 import Data.Char
 
@@ -44,7 +44,7 @@ psum p q = Parser (\cs -> (parse p cs) ++ (parse q cs))
 (<|>) :: Parser a -> Parser a -> Parser a
 p <|> q = Parser (\cs -> case parse (psum p q) cs of
                                 [] -> []
-                                (x:xs) -> [x])
+                                (x:_) -> [x])
 
 dpsum0 :: Parser [a] -> Parser [a]
 dpsum0 p = p <|> (return [])
@@ -138,7 +138,7 @@ integer = do
                   do
                     ds <- many0 digit
                     return (asInt (d:ds))
-          where asInt ds = sum [d * (10^p) | (d, p) <- zip (reverse ds) [0..] ]
+          where asInt ds = sum [d * (10^p) | (d, p) <- zip (reverse ds) [(0 :: Int)..] ]
 
 number :: Parser Double
 number = withDecimalPt <|> withoutDecimalPt
