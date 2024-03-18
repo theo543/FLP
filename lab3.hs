@@ -319,9 +319,17 @@ factorialf :: Integer -> Integer
 factorialf = fix (\f n -> if n==0 then 1 else n * (f (n-1)))
 
 ackermannf :: Integer -> Integer -> Integer
-ackermannf = fix (undefined)
+ackermannf = fix (\f m n -> case (m, n) of 
+        (0, n) -> n + 1
+        (m, 0) -> f (m - 1) 1
+        (m, n) -> f (m - 1) (f m (n - 1))
+    )
 
 data Peano = Zero | Succ Peano deriving Show
+
+toPeano :: (Eq a, Num a) => a -> Peano
+toPeano 0 = Zero
+toPeano n = Succ (toPeano $ n - 1)
 
 evenp :: Peano -> Bool
 evenp Zero = True
@@ -332,17 +340,23 @@ oddp Zero = False
 oddp (Succ n) = evenp n
 
 evenoddf :: Peano -> (Bool, Bool)
-evenoddf = fix (undefined)
-testevenoddf :: Bool
+evenoddf = fix (\f n -> case n of
+        Zero -> (True, False)
+        (Succ Zero) -> (False, True)
+        (Succ (Succ n)) -> f n
+    )
 
+testevenoddf :: Bool
 testevenoddf = evenoddf (Succ (Succ (Succ Zero))) == (False, True)
 
 denot :: Stmt -> [(String, Int)] -> [(String, Int)]
-denot Skip = undefined
-denot (AtrE t e) = undefined
-denot (Seq s1 s2) = undefined
-denot (IfE be s1 s2) = undefined
-denot (WhileE be s1) = fix (undefined)
+denot Skip = id
+denot (AtrE t e) = \vars -> update t (value e vars) vars
+denot (Seq s1 s2) = denot s2 . denot s1
+denot (IfE be s1 s2) = \vars -> (if valueb be vars then denot s1 else denot s2) vars
+--denot loop@(WhileE be s1) = denot $ IfE be (Seq s1 loop) Skip
+denot (WhileE be s1) = fix (\f vars -> if valueb be vars then f $ s1_denot vars else vars)
+                       where s1_denot = denot s1
 
 prog :: Stmt
 prog = sum_no_p
@@ -370,7 +384,7 @@ data ExprBoolF a = Var String | Neg a | Implies a a deriving Show
 -- :k ExprBoolF
 
 instance Functor ExprBoolF where
-    fmap eval (Var v) = Var v
+    fmap _    (Var v) = Var v
     fmap eval (Neg phi) = Neg (eval phi)
     fmap eval (Implies phi psi) = Implies (eval phi) (eval psi)
 
@@ -396,6 +410,7 @@ alg (Implies x y) = \e -> impl (x e) (y e)
 sampleEval :: String -> Bool
 sampleEval "a" = True
 sampleEval "b" = False
+sampleEval  _  = undefined
 
 test :: Bool
 test = catamorphism alg sampleExpr sampleEval == False
@@ -410,20 +425,20 @@ instance Show StmtFix where
     show (Fx a) = "(Fx (" ++ show a ++ "))"
 
 instance Functor StmtF where
-    fmap eval SkipF = undefined
-    fmap eval (AtrEF t e) = undefined
-    fmap eval (SeqF s1 s2) = undefined
-    fmap eval (IfEF be s1 s2) = undefined
-    fmap eval (WhileEF be s1) = undefined
+    fmap _    SkipF = SkipF
+    fmap _    (AtrEF t e) = AtrEF t e
+    fmap eval (SeqF s1 s2) = SeqF (eval s1) (eval s2)
+    fmap eval (IfEF be s1 s2) = IfEF be (eval s1) (eval s2)
+    fmap eval (WhileEF be s1) = WhileEF be (eval s1)
 
 type TargetStmtAlgebra = Algebra StmtF ([(String, Int)] -> [(String, Int)])
 
 algs :: TargetStmtAlgebra
-algs SkipF = undefined
-algs (AtrEF t e) = undefined
-algs (SeqF s1 s2) = undefined
-algs (IfEF be s1 s2) = undefined
-algs (WhileEF be s1) = fix (undefined)
+algs SkipF = id
+algs (AtrEF t e) = \vars -> update t (value e vars) vars
+algs (SeqF s1 s2) = s2 . s1
+algs (IfEF be s1 s2) = \vars -> (if valueb be vars then s1 else s2) vars
+algs (WhileEF be s1) = fix (\f vars -> if valueb be vars then f $ s1 vars else vars)
 
 -- Here we do a hack
 convstmt :: Stmt -> StmtFix
