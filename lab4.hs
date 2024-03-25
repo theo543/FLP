@@ -329,21 +329,44 @@ test_bssos = bssos prog []
 
 -- substitutes the QidX with the string by the the arithmetic expression
 substaexp :: AExp -> String -> AExp -> AExp
-substaexp = undefined
+substaexp exp searchStr replaceWith = case exp of
+    (Nu _) -> exp
+    (Qid str) -> if (str == searchStr) then replaceWith else exp
+    (PlusE expr1 expr2) -> PlusE (subst expr1) (subst expr2)
+    (TimesE expr1 expr2) -> TimesE (subst expr1) (subst expr2)
+    (DivE expr1 expr2) -> DivE (subst expr1) (subst expr2)
+    where subst expr = substaexp expr searchStr replaceWith
 
 data Assn = BEX Bool | LEX AExp AExp | NotEX Assn | AndEX Assn Assn | DisjInfX [Assn]
 
 -- value of an assertion relative to a state, similar to valueb
 valueassn :: Assn -> [(String, Int)] -> Bool
-valueassn = undefined
+valueassn assert vars = case assert of
+    (BEX b) -> b
+    (LEX l r) -> (value l vars) <= (value r vars)
+    (NotEX a) -> not (v a)
+    (AndEX a1 a2) -> (v a1) && (v a2)
+    (DisjInfX aList) -> any v aList
+    where v assert = valueassn assert vars
 
 -- converts a boolean expression to an assertion
 convassn :: BExp -> Assn
-convassn = undefined
+convassn bexp = case bexp of
+    (BE b) -> BEX b
+    (LE l r) -> LEX l r
+    (NotE e) -> NotEX (convassn e)
+    (AndE b1 b2) -> AndEX (convassn b1) (convassn b2)
 
 -- substitutes the QidX with the string by the the arithmetic expression
 substassn :: Assn -> String -> AExp -> Assn
-substassn = undefined
+substassn assert searchFor replaceWith = case assert of
+    (BEX _) -> assert
+    (LEX l r) -> LEX (subst_a l) (subst_a r)
+    (NotEX notAssert) -> NotEX $ subst notAssert
+    (AndEX a1 a2) -> AndEX (subst a1) (subst a2)
+    (DisjInfX infList) -> DisjInfX $ fmap subst infList
+    where subst a = substassn a searchFor replaceWith
+          subst_a aexp = substaexp aexp searchFor replaceWith
 
 -- logical or
 orx :: Assn -> Assn -> Assn
@@ -356,7 +379,17 @@ extr _ = error "Must be a DisjInfX"
 
 -- computes the weakest precondition
 wp :: Stmt -> Assn -> Assn
-wp = undefined
+wp st asrt = case st of
+    Skip -> asrt
+    (AtrE name aexp) -> substassn asrt name aexp
+    (Seq s1 s2) -> wp s1 $ wp s2 asrt
+    (IfE cond_ s_if s_else) -> (cond `AndEX` wp s_if asrt) `orx` (NotEX cond `AndEX` wp s_else asrt)
+        where cond = convassn cond_
+    (WhileE cond_ body) -> DisjInfX pInfList
+        where cond = convassn cond_
+              p0 = NotEX cond `AndEX` asrt
+              pk_plus_1 pk = cond `AndEX` wp body pk
+              pInfList = iterate pk_plus_1 p0
 
 test1 :: Bool
 test1 = valueassn (wp prog (LEX (Qid "s") (Nu 5051))) [] -- should return true
