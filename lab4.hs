@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wall -Wextra -Wno-unused-do-bind -Wno-name-shadowing #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 import Data.Char
@@ -10,11 +11,10 @@ item = Parser (\cs -> case cs of
                 (c:cs) -> [(c,cs)])
 
 instance Monad Parser where
-    return a = Parser (\cs -> [(a,cs)])
     p >>= f = Parser (\cs -> concat (map (\(a, cs') -> (parse (f a) cs')) (parse p cs)))
 
 instance Applicative Parser where
-    pure = return
+    pure a = Parser (\cs -> [(a,cs)])
     mf <*> ma = do
         f <- mf
         va <- ma
@@ -32,7 +32,7 @@ psum p q = Parser (\cs -> (parse p cs) ++ (parse q cs))
 (<|>) :: Parser a -> Parser a -> Parser a
 p <|> q = Parser (\cs -> case parse (psum p q) cs of
                                 [] -> []
-                                (x:xs) -> [x])
+                                (x:_) -> [x])
 
 dpsum0 :: Parser [a] -> Parser [a]                       
 dpsum0 p = p <|> (return [])
@@ -80,6 +80,7 @@ data AExp = Nu Int | Qid String | PlusE AExp AExp | TimesE AExp AExp | DivE AExp
 aexp :: Parser AExp
 aexp = plusexp <|> mulexp <|> divexp <|> npexp
 
+npexp :: Parser AExp
 npexp = parexp <|> qid <|> integer
 
 parexp :: Parser AExp
@@ -118,7 +119,7 @@ integer = do
                       do
                         ds <- many0 digit
                         return (Nu (ss*(asInt (d:ds))))
-          where asInt ds = sum [d * (10^p) | (d, p) <- zip (reverse ds) [0..] ]
+          where asInt ds = sum [d * (10^p) | (d, p) <- zip (reverse ds) [(0 :: Int)..] ]
 
 qid :: Parser AExp
 qid = do
@@ -154,6 +155,7 @@ data BExp = BE Bool | LE AExp AExp | NotE BExp | AndE BExp BExp
 bexp :: Parser BExp
 bexp = lexp <|> notexp <|> andexp <|> npexpb
 
+npexpb :: Parser BExp
 npexpb = parexpb <|> true <|> false
 
 parexpb :: Parser BExp
@@ -257,45 +259,70 @@ skip = do
           symbol "skip"
           return Skip
 
+parseGet :: Parser a -> String -> a
+parseGet p s = case parse p s of
+    [] -> error "Parsing produced no results."
+    (a, _):[] -> a
+    _ -> error "Parsing produced multiple results."
+
+sum_no :: String
 sum_no = "'n:=100; 's:=0; 'i:=0; while ( ('i<= 'n)) { 's:='s+'i; 'i:= 'i+1} "
 
 sum_no_p :: Stmt
-sum_no_p = (fst.head) (parse stmt sum_no)
+sum_no_p = parseGet stmt sum_no
 
+inf_cycle :: String
 inf_cycle = "'n := 0; while (0 <= 0) {'n := 'n +1}"
 
 inf_cycle_p :: Stmt
-inf_cycle_p = (fst.head) (parse stmt inf_cycle)
+inf_cycle_p = parseGet stmt inf_cycle
 
 recall :: String -> [(String, Int)] -> Int
-recall s ((t,v):xs) = if t == s then v else recall s xs
+recall key vars = case matches of
+    (_, val):_ -> val
+    [] -> error $ "Attempt to access uninitialized variable " ++ show key
+    where matches = filter ((== key) . fst) vars
+
+hasKey :: Eq a => a -> [(a, b)] -> Bool
+hasKey key = any ((== key) . fst)
+
+setValue :: Eq a => a -> b -> [(a, b)] -> [(a, b)]
+setValue key val = map (\t@(k, _) -> if k == key then (k, val) else t)
 
 update :: String -> Int -> [(String, Int)] -> [(String, Int)]
-update s v [] = [(s,v)]
-update s v ((t,w):xs) = if t==s then ((s,v):xs) else ((t,w):(update s v xs))
+update key val vars = if hasKey key vars then setValue key val vars else (key, val) : vars
 
 value :: AExp -> [(String, Int)] -> Int
-value (Nu n) _ = n
-value (Qid t) s = recall t s
-value (PlusE e1 e2) s = (value e1 s) + (value e2 s)
-value (TimesE e1 e2) s = (value e1 s) * (value e2 s)
-value (DivE e1 e2) s = div (value e1 s) (value e2 s)
+value expr vars = case expr of
+    Nu int -> int
+    Qid key -> recall key vars
+    PlusE a b -> v a + v b
+    TimesE a b -> v a * v b
+    DivE a b -> v a `div` v b
+    where v e = value e vars
 
 valueb :: BExp -> [(String, Int)] -> Bool
-valueb (BE b) _ = b
-valueb (LE e1 e2) s = (value e1 s) <= (value e2 s)
-valueb (NotE e) s = not (valueb e s)
-valueb (AndE e1 e2) s = (valueb e1 s) && (valueb e2 s)
+valueb expr vars = case expr of
+    BE bool -> bool
+    LE a b -> v a <= v b
+    NotE a -> not $ vb a
+    AndE a b -> vb a && vb b
+    where
+        v expr = value expr vars
+        vb expr = valueb expr vars
 
 bssos :: Stmt -> [(String, Int)] -> [(String, Int)]
-bssos Skip s = s
-bssos (AtrE t e) s = update t (value e s) s
-bssos (Seq s1 s2) s = bssos s2 (bssos s1 s)
-bssos (IfE be s1 s2) s = if (valueb be s) then (bssos s1 s) else (bssos s2 s)
-bssos (WhileE be s1) s = if (valueb be s) then (bssos (WhileE be s1) (bssos s1 s)) else s
+bssos stmt vars = case stmt of
+    AtrE name expr -> update name (value expr vars) vars
+    Seq a b -> bssos b $ bssos a vars
+    IfE expr true false -> bssos (if valueb expr vars then true else false) vars
+    WhileE cond body -> if valueb cond vars then bssos stmt (bssos body vars) else vars
+    Skip -> vars
 
+prog :: Stmt
 prog = sum_no_p
 
+test_bssos :: [(String, Int)]
 test_bssos = bssos prog []
 
 -- This is where the new stuff starts
@@ -325,14 +352,18 @@ orx p q = NotEX (AndEX (NotEX p) (NotEX q))
 -- extracts the list
 extr :: Assn -> [Assn]
 extr (DisjInfX li) = li
+extr _ = error "Must be a DisjInfX"
 
 -- computes the weakest precondition
 wp :: Stmt -> Assn -> Assn
 wp = undefined
 
+test1 :: Bool
 test1 = valueassn (wp prog (LEX (Qid "s") (Nu 5051))) [] -- should return true
 
+test2 :: Bool
 test2 = valueassn (wp prog (LEX (Qid "s") (Nu 5050))) [] -- should return true
 
+test3 :: Bool
 test3 = valueassn (wp prog (LEX (Qid "s") (Nu 5049))) [] -- should not terminate
 
