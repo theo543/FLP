@@ -108,8 +108,7 @@ step6cand equs = filter findEq equs
         varsInMultipleEq = findDuplicates $ concat uniqueVarPerEq
         findEq :: Equ -> Bool
         findEq equ = case equ of
-            (Equ (Variable _) (Variable _)) -> True -- "x == x" removed earlier
-            (Equ (Variable v) (FuncSym _ _)) -> elem v varsInMultipleEq
+            (Equ (Variable v) _) -> elem v varsInMultipleEq
             _ -> False
 
 -- substitutes in a list of equations a variable by a term EXCEPT for the equation "variable=term" (as used in step 6 of the algorithm)
