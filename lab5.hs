@@ -50,7 +50,7 @@ step2 = failIfAny findEq
     where
         findEq :: Equ -> Bool
         findEq eq = case eq of
-            (Equ (FuncSym f1 _) (FuncSym f2 _)) -> f1 == f2
+            (Equ (FuncSym f1 _) (FuncSym f2 _)) -> f1 /= f2
             _ -> False
         
 
@@ -88,15 +88,15 @@ step5 = failIfAny findEq
             (Equ (Variable v) (FuncSym _ terms)) -> elem v $ concatMap var terms
             _ -> False
 
-findDuplicates :: (Eq a) => [a] -> [a]
-findDuplicates list = case list of
+findDuplicates :: (Eq a, Ord a) => [a] -> [a]
+findDuplicates list = case (sort list) of
     [] -> []
     x:xs -> findDuplicates' x xs
     where
         findDuplicates' :: Eq t => t -> [t] -> [t]
         findDuplicates' lastSeen remaining = case remaining of
             [] -> []
-            x:xs | x == lastSeen -> x : findDuplicates' x xs
+            x:xs | x == lastSeen -> x : findDuplicates' x (dropWhile (== x) xs)
             x:xs -> findDuplicates' x xs
 
 -- candidates for "x=t" in step 6 of the algorithm
@@ -175,7 +175,7 @@ prettyEqs eqs = (intercalate "\n" $ map prettyEq eqs) ++ "\n"
 prettyUnify :: [Equ] -> String
 prettyUnify eq = case unify eq of
     (Set eqs) -> prettyEqs eqs
-    Failure -> "Failure"
+    Failure -> "Failure\n"
 
 prettyUnifyIO :: [Equ] -> IO ()
 prettyUnifyIO = putStr . prettyUnify
