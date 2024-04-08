@@ -1,22 +1,21 @@
+{-# OPTIONS_GHC -Wall -Wextra -Wno-unused-do-bind -Wno-name-shadowing #-}
+
+import Data.List
+
 data Term = Variable String | FuncSym String [Term]
     deriving (Eq, Show)
-    
-union2 :: (Eq a) => [a] -> [a] -> [a]
-union2 x y = x ++ [z | z <- y, notElem z x]
-    
-union :: (Eq a) => [[a]] -> [a]
-union = foldr union2 []
 
 -- returns all variables of a term
 var :: Term -> [String]
-var (Variable x) = [x]
-var (FuncSym f ts) = union (map var ts)
+var term = case term of
+    Variable varName -> [varName]
+    FuncSym _ terms -> concatMap var terms
 
 -- substitutes, in a term, a variable by another term
 subst :: Term -> String -> Term -> Term
-subst (Variable x) y t | x == y = t
-subst (Variable x) _ _ = Variable x
-subst (FuncSym f ts) y t = FuncSym f (map (\u -> subst u y t) ts)
+subst term findName replaceWith = case term of
+    Variable varName -> if varName == findName then replaceWith else term
+    FuncSym f terms -> FuncSym f (map (\t -> subst t findName replaceWith) terms)
 
 data Equ = Equ Term Term
     deriving Show
@@ -24,76 +23,132 @@ data Equ = Equ Term Term
 data StepResult = FailureS | Stopped | SetS [Equ]
     deriving Show
 
+equVar :: Equ -> [String]
+equVar (Equ t1 t2) = var t1 ++ var t2
+
+failIfAny :: (Equ -> Bool) -> [Equ] -> StepResult
+failIfAny predicate equs = if any predicate equs then FailureS else Stopped
+
 step1 :: [Equ] -> StepResult
-step1 [] = Stopped
-step1 ((Equ (FuncSym f ss) (FuncSym g ts)):es) | f == g = SetS ((zipWith Equ ss ts) ++ es)
-step1 (e:es) = case (step1 es) of
-                    Stopped -> Stopped
-                    SetS fs -> SetS (e:fs)
+step1 equs = let
+        findEq :: Equ -> Bool
+        findEq eq = case eq of
+            (Equ (FuncSym f1 l1) (FuncSym f2 l2)) -> (f1 == f2) && (length l1 == length l2)
+            _ -> False
+        (matches, rest) = partition findEq equs
+        modifyMatches :: Equ -> [Equ]
+        modifyMatches equ = case equ of
+            (Equ (FuncSym _ l1) (FuncSym _ l2)) -> zipWith Equ l1 l2
+            _ -> undefined
+    in
+        case matches of
+            [] -> Stopped
+            _ -> SetS $ concatMap modifyMatches matches ++ rest
 
 step2 :: [Equ] -> StepResult
-step2 [] = Stopped
-step2 ((Equ (FuncSym f ss) (FuncSym g ts)):es) | f /= g = FailureS
-step2 (e:es) = step2 es
+step2 = failIfAny findEq
+    where
+        findEq :: Equ -> Bool
+        findEq eq = case eq of
+            (Equ (FuncSym f1 _) (FuncSym f2 _)) -> f1 /= f2
+            _ -> False
+        
 
 step3 :: [Equ] -> StepResult
-step3 [] = Stopped
-step3 ((Equ (Variable x) (Variable y)):es) | x == y = SetS es
-step3 (e:es) = case (step3 es) of
-                    Stopped -> Stopped
-                    SetS fs -> SetS (e:fs)
+step3 equs = let
+        findEq :: Equ -> Bool
+        findEq eq = case eq of
+            (Equ (Variable v1) (Variable v2)) -> v1 == v2
+            _ -> False
+        (removed, remaining) = partition findEq equs
+    in
+        case removed of
+            [] -> Stopped
+            _ -> SetS remaining
 
 step4 :: [Equ] -> StepResult
-step4 [] = Stopped
-step4 ((Equ (FuncSym f ss) (Variable x)):es) = SetS ((Equ (Variable x) (FuncSym f ss)):es)
-step4 (e:es) = case (step4 es) of
-                    Stopped -> Stopped
-                    SetS fs -> SetS (e:fs)
+step4 equs = let
+        findEq :: Equ -> Bool
+        findEq eq = case eq of
+            (Equ (FuncSym _ _) (Variable _)) -> True
+            _ -> False
+        (matches, rest) = partition findEq equs
+        modifyMatches :: Equ -> Equ
+        modifyMatches (Equ a b) = Equ b a
+    in
+        case matches of
+            [] -> Stopped
+            _ -> SetS $ map modifyMatches matches ++ rest
 
 step5 :: [Equ] -> StepResult
-step5 [] = Stopped
-step5 ((Equ (Variable x) (FuncSym f ss)):es) | elem x (var (FuncSym f ss)) = FailureS
-step5 (e:es) = step5 es
+step5 = failIfAny findEq
+    where
+        findEq :: Equ -> Bool
+        findEq equ = case equ of
+            (Equ (Variable v) (FuncSym _ terms)) -> elem v $ concatMap var terms
+            _ -> False
+
+findDuplicates :: (Eq a, Ord a) => [a] -> [a]
+findDuplicates list = case (sort list) of
+    [] -> []
+    x:xs -> findDuplicates' x xs
+    where
+        findDuplicates' :: Eq t => t -> [t] -> [t]
+        findDuplicates' lastSeen remaining = case remaining of
+            [] -> []
+            x:xs | x == lastSeen -> x : findDuplicates' x (dropWhile (== x) xs)
+            x:xs -> findDuplicates' x xs
 
 -- candidates for "x=t" in step 6 of the algorithm
 step6cand :: [Equ] -> [Equ]
-step6cand es = [Equ (Variable x) t | (Equ (Variable x) t) <- es, not (elem x (var t)), length [1 | (Equ s u) <- es, or [elem x (var s), elem x (var u)]] > 1]
+step6cand equs = filter findEq equs
+    where
+        eqVars = map equVar equs
+        uniqueVarPerEq = map nub eqVars
+        varsInMultipleEq = findDuplicates $ concat uniqueVarPerEq
+        findEq :: Equ -> Bool
+        findEq equ = case equ of
+            (Equ (Variable v) _) -> elem v varsInMultipleEq
+            _ -> False
 
 -- substitutes in a list of equations a variable by a term EXCEPT for the equation "variable=term" (as used in step 6 of the algorithm)
 substeq :: [Equ] -> String -> Term -> [Equ]
-substeq [] _ _ = []
-substeq ((Equ s u):es) x t | (s == Variable x) && (u == t) = (Equ s u):(substeq es x t)
-substeq ((Equ s u):es) x t = (Equ (subst s x t) (subst u x t)):(substeq es x t)
+substeq equs findVar replaceWith = map (substeq' findVar replaceWith) equs
+    where
+        substeq' :: String -> Term -> Equ -> Equ
+        substeq' findVar replaceWith eq = case eq of
+            (Equ (Variable v) t) | v == findVar && t == replaceWith -> eq
+            (Equ t1 t2) -> Equ (s t1) (s t2)
+            where
+                s term = subst term findVar replaceWith
 
 step6 :: [Equ] -> StepResult
-step6 es = case (step6cand es) of
-                [] -> Stopped
-                (Equ (Variable x) t):_ -> SetS (substeq es x t)
-                
+step6 equs = case step6cand equs of
+    (Equ (Variable findVar) replaceWith):_ -> SetS $ substeq equs findVar replaceWith
+    _ -> Stopped
+
+stepsOrder :: [[Equ] -> StepResult]
+stepsOrder = [step1, step2, step3, step4, step5, step6]
+
 onestep :: [Equ] -> StepResult
-onestep es = case (step1 es) of
-              SetS fs -> SetS fs
-              Stopped -> case (step2 es) of
-                          FailureS -> FailureS
-                          Stopped -> case (step3 es) of
-                                      SetS fs -> SetS fs
-                                      Stopped -> case (step4 es) of
-                                                  SetS fs -> SetS fs
-                                                  Stopped -> case (step5 es) of
-                                                              FailureS -> FailureS
-                                                              Stopped ->  case (step6 es) of
-                                                                           SetS fs -> SetS fs
-                                                                           Stopped -> Stopped
+onestep = onestep' stepsOrder
+    where
+        onestep' :: [[Equ] -> StepResult] -> [Equ] -> StepResult
+        onestep' [] _ = Stopped
+        onestep' (currentStep:nextSteps) es = case (currentStep es) of
+            SetS fs -> SetS fs
+            Stopped -> onestep' nextSteps es
+            FailureS -> FailureS
 
 data AllResult = Failure | Set [Equ]
     deriving Show
 
 unify :: [Equ] -> AllResult
-unify es = case (onestep es) of
+unify es = case onestep es of
                     Stopped -> Set es
                     FailureS -> Failure
                     SetS fs -> unify fs
-                    
+              
 -- This is where the new stuff starts
 
 -- an endless reservoir of variables
