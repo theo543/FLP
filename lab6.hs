@@ -1,6 +1,7 @@
 {-# OPTIONS_GHC -Wall -Wextra -Wno-unused-do-bind -Wno-name-shadowing #-}
 
 import Data.List
+import Data.Maybe
 
 data Term = Variable String | FuncSym String [Term]
     deriving (Eq, Show)
@@ -153,44 +154,57 @@ unify es = case onestep es of
 
 -- an endless reservoir of variables
 freshvarlist :: [String]
-freshvarlist = map ("x" ++) (map show [0..])
+freshvarlist = map ("x" ++) (map show [0 :: Integer ..])
+
+solved_form_to_tuples :: [Equ] -> [(String, Term)]
+solved_form_to_tuples = map
+    (\equ -> case equ of
+        (Equ (Variable v) t) -> (v, t)
+        bad -> error $ "Not in solved form: " ++ show bad 
+    )
 
 -- a list of equations in solved form acting as a substitution
 substitute :: [Equ] -> Term -> Term
-substitute = undefined
+substitute subst_equs = substitute'
+    where
+        subst_key_val = solved_form_to_tuples subst_equs
+        substitute' t = case t of
+            (Variable v) -> fromMaybe t $ fmap snd $ find (\(key, _) -> key == v) subst_key_val
+            (FuncSym f vars) -> FuncSym f (map substitute' vars)
 
 data AtomicRel = AtomicRel String [Term]
     deriving (Eq, Show)
 
 -- variables of a relational atomic formula
 vara :: AtomicRel -> [String]
-vara (AtomicRel p ts) = undefined
+vara (AtomicRel _ ts) = concatMap var ts
 
 -- substitution for an atomic formula
 substitutea :: [Equ] -> AtomicRel -> AtomicRel
-substitutea es (AtomicRel p ts) = undefined
+substitutea subst_equs (AtomicRel p terms) = AtomicRel p $ map (substitute subst_equs) terms
 
 -- unification for two atomic formulas
 unifya :: AtomicRel -> AtomicRel -> AllResult
-unifya = undefined
+unifya (AtomicRel _ tlist1) (AtomicRel _ tlist2) = unify $ zipWith Equ tlist1 tlist2
 
 data Clause = Clause AtomicRel [AtomicRel]
     deriving (Eq, Show)
 
 -- variables of a clause
 varcl :: Clause -> [String]
-varcl (Clause at ats) = undefined
+varcl (Clause at ats) = concatMap vara $ at:ats
 
 -- substitution for a clause
 substitutecl :: [Equ] -> Clause -> Clause
-substitutecl es (Clause at ats) = undefined
+substitutecl subst_equs (Clause at ats) = Clause (subst at) (map subst ats)
+    where subst = substitutea subst_equs
 
 data Goal = Goal [AtomicRel]
     deriving (Eq, Show)
 
 -- variables of a goal
 vargl :: Goal -> [String]
-vargl (Goal ats) = undefined
+vargl (Goal ats) = concatMap vara ats
 
 -- fresh variables for a goal
 varngl :: Goal -> [String]
