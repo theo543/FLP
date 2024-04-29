@@ -1,3 +1,10 @@
+{-# OPTIONS_GHC -Wall -Wextra -Wno-unused-do-bind -Wno-name-shadowing #-}
+
+import Data.List (delete)
+
+notNull :: [a] -> Bool
+notNull = not . null
+
 data PCFTerm = Var String | Lam String PCFTerm | App PCFTerm PCFTerm | Zero | Suc PCFTerm | IfZ PCFTerm PCFTerm String PCFTerm | Fix String PCFTerm
     deriving Show
 
@@ -7,19 +14,35 @@ union2 x y = x ++ [z | z <- y, notElem z x]
 
 -- variables of a PCF term
 var :: PCFTerm -> [String]
-var = undefined
+var term = case term of
+    Var v -> [v]
+    Lam param body -> [param] `union2` var body
+    App a b -> var a `union2` var b
+    Zero -> []
+    Suc nr -> var nr
+    IfZ num if_body else_param else_body -> var num `union2` var if_body `union2` [else_param] `union2` var else_body
+    Fix fix_param fix_body -> [fix_param] `union2` var fix_body
 
 -- free variables of a PCF term
 fv :: PCFTerm -> [String]
-fv = undefined
+fv term = case term of
+    Var v -> [v]
+    Lam param body -> delete param $ var body
+    App a b -> var a `union2` var b
+    Zero -> []
+    Suc nr -> var nr
+    IfZ num if_body else_param else_body -> var num `union2` var if_body `union2` delete else_param (var else_body)
+    Fix fix_param fix_body -> delete fix_param $ var fix_body
 
 -- an endless reservoir of variables
 freshvarlist :: [String]
-freshvarlist = map ("x" ++) (map show [0..])
+freshvarlist = map ("x" ++) (map show [(0 :: Integer)..])
 
 -- fresh variable for a PCF term
 freshforterm :: PCFTerm -> String
-freshforterm t = head [x | x <- freshvarlist, notElem x (var t)]
+freshforterm t = case [x | x <- freshvarlist, notElem x (var t)] of
+    freshVar : _ -> freshVar
+    [] -> error "Can never happen, terms don't have infinite variables."
 
 -- the substitution operation for PCF terms
 subst :: PCFTerm -> String -> PCFTerm -> PCFTerm
@@ -44,11 +67,36 @@ subst (Fix x s) y t
 
 -- eager isValue
 isValueE :: PCFTerm -> Bool
-isValueE = undefined
+isValueE term = case term of
+    Var _ -> True
+    App _ _ -> False
+    Lam _ _ -> True
+    Zero -> True
+    Suc num -> isValueE num
+    IfZ _ _ _ _ -> False
+    Fix _ _ -> False
 
 -- eager beta reduction in one step
 beta1E :: PCFTerm -> [PCFTerm]
-beta1E = undefined
+beta1E term = case term of
+    Var _ -> []
+    Lam _ _ -> []
+    App a b | notNull $ a' -> fmap (`App` b) $ a'
+        where a' = beta1E a
+    App a b | isValueE a && notNull b' -> fmap (a `App`) b'
+        where b' = beta1E b
+    App (Lam param body) arg | isValueE arg -> [subst body param arg]
+    App _ _ -> []
+    Zero -> []
+    Suc nr | notNull nr' -> fmap Suc nr'
+        where nr' = beta1E nr
+    Suc _ -> []
+    IfZ Zero if_body _ _ -> [if_body]
+    IfZ nr if_body else_param else_body | notNull nr' -> fmap (\nr' -> IfZ nr' if_body else_param else_body) nr'
+        where nr' = beta1E nr
+    IfZ suc_nr@(Suc nr) _ else_param else_body | isValueE suc_nr -> [subst else_body else_param nr]
+    IfZ _ _ _ _ -> []
+    Fix fix_param fix_body -> [subst fix_body fix_param term]
 
 -- checks whether a term is in normal form
 nfE :: PCFTerm -> Bool
@@ -68,7 +116,9 @@ df_leaves (TermTree _ l) = concatMap df_leaves l
 
 -- the left-most outer-most reduction of a term
 reduceE :: PCFTerm -> PCFTerm
-reduceE = head . df_leaves . reductreeE
+reduceE term = case df_leaves $ reductreeE term of
+    x : _ -> x
+    [] -> error "Failed to reduce term."
 
 -- natural numbers in PCF
 number :: Int -> PCFTerm
@@ -77,32 +127,97 @@ number n = Suc (number (n-1))
 
 -- conversion from PCF back to natural numbers
 backnr :: PCFTerm -> Int
-backnr Zero = 0
-backnr (Suc n) = (backnr n) + 1
+backnr term = case term of
+    Zero -> 0
+    (Suc n) -> (backnr n) + 1
+    _ -> error $ "Term " ++ show term ++ " is not a number."
 
 -- PCF term for addition
 tadd :: PCFTerm
-tadd = undefined
+tadd =  Fix "plus_rec" (
+            Lam "x" ( Lam "y" ( 
+                IfZ (Var "y")
+                    (Var "x")
+                "y'" (
+                    Suc (App (App (Var "plus_rec") (Var "x")) (Var "y'"))
+                )
+            ))
+        )
 
+testadd :: Int
 testadd = backnr (reduceE (App (App tadd (number 2)) (number 3)))
 
--- PCF term for subtraction
+-- PCF term for saturating subtraction
 tsub :: PCFTerm
-tsub = undefined
+tsub =  Fix "subst_rec" (
+            Lam "x" ( Lam "y" (
+                IfZ (Var "y")
+                    (Var "x")
+                "y'" (
+                    IfZ (Var "x")
+                        Zero
+                    "x'" (
+                        App (App (Var "subst_rec") (Var "x'")) (Var "y'")
+                    )
+                )
+            ))
+        )
 
-testsub1 = backnr (reduceE (App (App tsub (number 15)) (number 8)))
+testsub :: Int -> Int -> Int
+testsub a b = backnr (reduceE (App (App tsub (number a)) (number b)))
 
-testsub2 = backnr (reduceE (App (App tsub (number 7)) (number 8)))
+testsub1 :: Int
+testsub1 = testsub 15 8
+
+testsub2 :: Int
+testsub2 = testsub 7 8
 
 -- PCF term for GCD
 tgcd :: PCFTerm
-tgcd = undefined
+tgcd =  Fix "gcd_rec" (
+            Lam "x" ( Lam "y" (
+                IfZ (Var "x")
+                    (Var "y")
+                "_" (
+                    IfZ (Var "y")
+                        (Var "x")
+                    "_" (
+                        IfZ (App (App tsub (Var "y")) (Var "x"))
+                            (App (App (Var "gcd_rec") (App (App tsub (Var "x")) (Var "y"))) (Var "y"))
+                        "y_minus_x'" (
+                            (App (App (Var "gcd_rec") (Var "x")) (Suc (Var "y_minus_x'")))
+                        )
+                    )
+                )
+            ))
+        )
 
-testgcd = backnr (reduceE (App (App tgcd (number 30)) (number 36)))
+testgcd :: Int -> Int -> Int
+testgcd a b = backnr (reduceE (App (App tgcd (number a)) (number b)))
+
+testgcd1 :: Int
+testgcd1 = testgcd 30 36
 
 -- PCF term for minimization
 tmu :: PCFTerm
-tmu = undefined
+tmu =   Lam "function" (App
+            (Fix "find_first_zero_rec" (
+                Lam "counter" (
+                    IfZ (App (Var "function") (Var "counter"))
+                        (Var "counter")
+                    "_" (
+                        App (Var "find_first_zero_rec") (Suc (Var "counter"))
+                    )
+                )
+            ))
+            Zero
+        )
 
-testmu1 = backnr (reduceE (App tmu (Lam "x" (App (App tsub (number 15)) (Var "x")))))
-testmu2 = backnr (reduceE (App tmu (Lam "x" (App (App tadd (number 15)) (Var "x"))))) -- should not terminate
+testmu :: PCFTerm -> Int
+testmu function = backnr (reduceE (App tmu function))
+
+testmu1 :: Int
+testmu1 = testmu (Lam "x" (App (App tsub (number 15)) (Var "x")))
+
+testmu2 :: Int
+testmu2 =  testmu (Lam "x" (App (App tadd (number 15)) (Var "x"))) -- should not terminate
