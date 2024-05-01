@@ -32,12 +32,12 @@ var term = case term of
 fv :: PCFTerm -> [String]
 fv term = case term of
     Var v -> [v]
-    Lam param body -> delete param $ var body
-    App a b -> var a `union2` var b
+    Lam param body -> delete param $ fv body
+    App a b -> fv a `union2` fv b
     Zero -> []
-    Suc nr -> var nr
-    IfZ num if_body else_param else_body -> var num `union2` var if_body `union2` delete else_param (var else_body)
-    Fix fix_param fix_body -> delete fix_param $ var fix_body
+    Suc nr -> fv nr
+    IfZ num if_body else_param else_body -> fv num `union2` fv if_body `union2` delete else_param (fv else_body)
+    Fix fix_param fix_body -> delete fix_param $ fv fix_body
 
 -- an endless reservoir of variables
 freshvarlist :: [String]

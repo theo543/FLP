@@ -16,15 +16,15 @@ union2 x y = x ++ [z | z <- y, notElem z x]
 var :: LambdaTerm -> [String]
 var term = case term of
     Var v -> [v]
-    Lam x t -> x : var t
-    App t1 t2 -> var t1 ++ var t2
+    Lam x t -> [x] `union2` var t
+    App t1 t2 -> var t1 `union2` var t2
 
 -- free variables of a lambda term
 fv :: LambdaTerm -> [String]
 fv term = case term of
     Var v -> [v]
     Lam x t -> filter (/= x) $ fv t
-    App t1 t2 -> fv t1 ++ fv t2
+    App t1 t2 -> fv t1 `union2` fv t2
 
 -- an endless reservoir of variables
 freshvarlist :: [String]
@@ -32,7 +32,7 @@ freshvarlist = map ("x" ++) (map show [(0 :: Integer)..])
 
 -- fresh variable for a term
 freshforterm :: LambdaTerm -> String
-freshforterm t = case filter (\freshVar -> not $ freshVar `elem` (fv t)) freshvarlist of
+freshforterm t = case filter (\freshVar -> not $ freshVar `elem` (var t)) freshvarlist of
     x:_ -> x
     [] -> error "This can't happen because terms don't have infinite variables."
 
