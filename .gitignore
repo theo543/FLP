@@ -1,1 +1,4 @@
 .vscode
+
+# Cabal stuff from installing QuickCheck
+.ghc.environment.*

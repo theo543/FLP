@@ -1,6 +1,9 @@
 {-# OPTIONS_GHC -Wall -Wextra -Wno-unused-do-bind -Wno-name-shadowing #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 import Data.List (uncons)
+
+import Test.QuickCheck ( quickCheckAll, NonNegative(NonNegative) )
 
 data LambdaTerm = Var String | Lam String LambdaTerm | App LambdaTerm LambdaTerm
     deriving Show
@@ -132,6 +135,7 @@ church n = Lam "f" $ Lam "x" $ repeated_app n
     where
         repeated_app n = case n of
             0 -> Var "x"
+            n | n < 0 -> error "This encoding does not support negative numbers."
             n -> App (Var "f") $ repeated_app $ n - 1
 
 -- convert from Church numeral back to number
@@ -145,17 +149,38 @@ backch term = case term of
             App (Var "f") t -> 1 + back_repeated_app t
             _ -> error "Not a Church numeral."
 
+prop_conversionRoundtrip :: NonNegative Int -> Bool
+prop_conversionRoundtrip (NonNegative n) = n == backch (church n)
+
+prop_conversionRoundtripWithReduce :: NonNegative Int -> Bool
+prop_conversionRoundtripWithReduce (NonNegative n) = n == backch (reduce (church n))
+
 -- lambda term for successor
 tsucc :: LambdaTerm 
 tsucc = Lam "n" $ Lam "f" $ Lam "x" $ App (Var "f") (App (App (Var "n") (Var "f")) (Var "x"))
 
-testsucc :: Int
-testsucc = backch ((reduce (App tsucc (church 7))))
+lamSuc :: Int -> Int
+lamSuc a = backch ((reduce (App tsucc (church a))))
+
+prop_lamSuc :: NonNegative Int -> Bool
+prop_lamSuc (NonNegative a) = (lamSuc a) == (a + 1)
 
 -- lambda term for addition
 tadd :: LambdaTerm
 tadd = Lam "n" $ Lam "m" $ Lam "f" $ Lam "x" $ App (App (Var "n") (Var "f")) (App ((App (Var "m") (Var "f"))) (Var "x"))
 
-testadd :: Int
-testadd = backch ((reduce (App (App tadd (church 7)) (church 8))))
+lamAdd :: Int -> Int -> Int
+lamAdd a b = backch ((reduce (App (App tadd (church a)) (church b))))
 
+prop_lamAdd :: NonNegative Int -> NonNegative Int -> Bool
+prop_lamAdd (NonNegative a) (NonNegative b) = (a `lamAdd` b) == (a + b)
+
+return [] -- TH weirdness
+
+main :: IO ()
+main = do
+  result <- $quickCheckAll
+  if result then
+    putStrLn "All tests passed"
+  else
+    putStrLn "\n\n\x1b[31mSome tests failed!!\x1b[0m\n\n"
